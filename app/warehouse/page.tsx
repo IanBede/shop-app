@@ -1,42 +1,15 @@
 import Link from "next/link";
 
-import prisma from "@/app/lib/prisma";
+import { getScoringStore } from "@/app/lib/scoringStore";
 
 import { RunScoringButton } from "./RunScoringButton";
 
 export const runtime = "nodejs";
-
-type QueueRow = {
-  order_id: number;
-  customer_id: number;
-  late_probability: number;
-};
+export const dynamic = "force-dynamic";
 
 export default async function WarehousePage() {
-  const columns = await prisma.$queryRaw<Array<{ name: string }>>`
-    PRAGMA table_info(orders);
-  `;
-  const hasLateProbability = columns.some((c) => c.name === "late_probability");
-
-  const rows = hasLateProbability
-    ? await prisma.$queryRaw<QueueRow[]>`
-        SELECT
-          order_id,
-          customer_id,
-          MIN(1.0, MAX(0.0, late_probability)) AS late_probability
-        FROM orders
-        ORDER BY late_probability DESC
-        LIMIT 50
-      `
-    : await prisma.$queryRaw<QueueRow[]>`
-        SELECT
-          order_id,
-          customer_id,
-          MIN(1.0, MAX(0.0, risk_score / 100.0)) AS late_probability
-        FROM orders
-        ORDER BY late_probability DESC
-        LIMIT 50
-      `;
+  const store = getScoringStore();
+  const rows = store.rows.slice(0, 50);
 
   return (
     <div className="min-h-screen bg-zinc-50">
@@ -58,6 +31,11 @@ export default async function WarehousePage() {
             <p className="mt-2 text-sm text-zinc-600">
               Top 50 orders sorted by late probability (descending).
             </p>
+            {store.lastScoredAt ? (
+              <p className="mt-1 text-xs text-zinc-500">
+                Last scored: {new Date(store.lastScoredAt).toLocaleString()}
+              </p>
+            ) : null}
           </div>
 
           <RunScoringButton />
