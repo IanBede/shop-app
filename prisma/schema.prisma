@@ -1,0 +1,107 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model customers {
+  customer_id      Int               @id @default(autoincrement())
+  full_name        String
+  email            String            @unique(map: "sqlite_autoindex_customers_1")
+  gender           String
+  birthdate        String
+  created_at       String
+  city             String?
+  state            String?
+  zip_code         String?
+  customer_segment String?
+  loyalty_tier     String?
+  is_active        Int               @default(1)
+  orders           orders[]
+  product_reviews  product_reviews[]
+}
+
+model order_items {
+  order_item_id Int      @id @default(autoincrement())
+  order_id      Int
+  product_id    Int
+  quantity      Int
+  unit_price    Float
+  line_total    Float
+  products      products @relation(fields: [product_id], references: [product_id], onDelete: NoAction, onUpdate: NoAction)
+  orders        orders   @relation(fields: [order_id], references: [order_id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([product_id], map: "idx_items_product")
+  @@index([order_id], map: "idx_items_order")
+}
+
+model orders {
+  order_id       Int           @id @default(autoincrement())
+  customer_id    Int
+  order_datetime String
+  billing_zip    String?
+  shipping_zip   String?
+  shipping_state String?
+  payment_method String
+  device_type    String
+  ip_country     String
+  promo_used     Int           @default(0)
+  promo_code     String?
+  order_subtotal Float
+  shipping_fee   Float
+  tax_amount     Float
+  order_total    Float
+  risk_score     Float
+  is_fraud       Int           @default(0)
+  order_items    order_items[]
+  customers      customers     @relation(fields: [customer_id], references: [customer_id], onDelete: NoAction, onUpdate: NoAction)
+  shipments      shipments?
+
+  @@index([order_datetime], map: "idx_orders_datetime")
+  @@index([customer_id], map: "idx_orders_customer")
+}
+
+model product_reviews {
+  review_id       Int       @id @default(autoincrement())
+  customer_id     Int
+  product_id      Int
+  rating          Int
+  review_datetime String
+  review_text     String?
+  products        products  @relation(fields: [product_id], references: [product_id], onDelete: NoAction, onUpdate: NoAction)
+  customers       customers @relation(fields: [customer_id], references: [customer_id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([customer_id, product_id], map: "sqlite_autoindex_product_reviews_1")
+  @@index([customer_id], map: "idx_reviews_customer")
+  @@index([product_id], map: "idx_reviews_product")
+}
+
+model products {
+  product_id      Int               @id @default(autoincrement())
+  sku             String            @unique(map: "sqlite_autoindex_products_1")
+  product_name    String
+  category        String
+  price           Float
+  cost            Float
+  is_active       Int               @default(1)
+  order_items     order_items[]
+  product_reviews product_reviews[]
+}
+
+model shipments {
+  shipment_id     Int    @id @default(autoincrement())
+  order_id        Int    @unique(map: "sqlite_autoindex_shipments_1")
+  ship_datetime   String
+  carrier         String
+  shipping_method String
+  distance_band   String
+  promised_days   Int
+  actual_days     Int
+  late_delivery   Int    @default(0)
+  orders          orders @relation(fields: [order_id], references: [order_id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([late_delivery], map: "idx_shipments_late")
+}
