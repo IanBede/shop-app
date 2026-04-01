@@ -64,6 +64,12 @@ export default async function WarehousePage() {
                   >
                     Late Probability
                   </th>
+                  <th
+                    scope="col"
+                    className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600"
+                  >
+                    Fraud risk
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-200 bg-white">
@@ -78,11 +84,17 @@ export default async function WarehousePage() {
                     <td className="whitespace-nowrap px-6 py-4 text-sm text-zinc-700">
                       {(Math.round(r.late_probability * 1000) / 10).toFixed(1)}%
                     </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-sm text-zinc-700">
+                      <span className={r.is_fraud === 1 ? "font-semibold text-rose-700" : ""}>
+                        {(Math.round(r.fraud_probability * 1000) / 10).toFixed(1)}%
+                        {r.is_fraud === 1 ? " (flagged)" : ""}
+                      </span>
+                    </td>
                   </tr>
                 ))}
                 {rows.length === 0 ? (
                   <tr>
-                    <td className="px-6 py-8 text-sm text-zinc-600" colSpan={3}>
+                    <td className="px-6 py-8 text-sm text-zinc-600" colSpan={4}>
                       No orders found.
                     </td>
                   </tr>
