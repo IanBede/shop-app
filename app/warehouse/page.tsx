@@ -1,15 +1,26 @@
 import Link from "next/link";
 
-import { getLastScoredAt, loadWarehouseQueue } from "@/app/lib/scoringStore";
+import { getLastScoredAt, loadWarehouseQueue, WAREHOUSE_PAGE_SIZE } from "@/app/lib/scoringStore";
 
 import { RunScoringButton } from "./RunScoringButton";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export default async function WarehousePage() {
-  const rows = await loadWarehouseQueue();
+export default async function WarehousePage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ page?: string }>;
+}) {
+  const sp = (await searchParams) ?? {};
+  const pageParam = Number.parseInt(sp.page ?? "1", 10);
+  const page = Number.isFinite(pageParam) && pageParam >= 1 ? pageParam : 1;
+
+  const { rows, page: currentPage, totalPages, totalCount } = await loadWarehouseQueue(page);
   const lastScoredAt = getLastScoredAt();
+
+  const prevHref = `/warehouse?page=${currentPage - 1}`;
+  const nextHref = `/warehouse?page=${currentPage + 1}`;
 
   return (
     <div className="min-h-screen bg-zinc-50">
@@ -29,7 +40,10 @@ export default async function WarehousePage() {
               Late Delivery Priority Queue
             </h1>
             <p className="mt-2 text-sm text-zinc-600">
-              Top 50 orders sorted by late probability (descending).
+              {totalCount} orders — sorted by late probability (highest first).{" "}
+              {totalPages > 1
+                ? `Page ${currentPage} of ${totalPages} (${WAREHOUSE_PAGE_SIZE} per page).`
+                : null}
             </p>
             {lastScoredAt ? (
               <p className="mt-1 text-xs text-zinc-500">
@@ -103,6 +117,41 @@ export default async function WarehousePage() {
             </table>
           </div>
         </div>
+
+        {totalPages > 1 ? (
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-zinc-200 bg-white px-6 py-4 shadow-sm">
+            <div className="text-sm text-zinc-600">
+              Showing {(currentPage - 1) * WAREHOUSE_PAGE_SIZE + 1}–
+              {Math.min(currentPage * WAREHOUSE_PAGE_SIZE, totalCount)} of {totalCount}
+            </div>
+            <div className="flex items-center gap-2">
+              {currentPage <= 1 ? (
+                <span className="inline-flex cursor-not-allowed items-center rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-2 text-sm font-medium text-zinc-400">
+                  Previous
+                </span>
+              ) : (
+                <Link
+                  href={prevHref}
+                  className="inline-flex items-center rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm hover:bg-zinc-50"
+                >
+                  Previous
+                </Link>
+              )}
+              {currentPage >= totalPages ? (
+                <span className="inline-flex cursor-not-allowed items-center rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-2 text-sm font-medium text-zinc-400">
+                  Next
+                </span>
+              ) : (
+                <Link
+                  href={nextHref}
+                  className="inline-flex items-center rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm hover:bg-zinc-50"
+                >
+                  Next
+                </Link>
+              )}
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

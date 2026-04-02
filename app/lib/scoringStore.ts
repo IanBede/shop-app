@@ -101,16 +101,48 @@ const orderSelect = {
   shipping_state: true,
 } as const;
 
-export async function loadWarehouseQueue(): Promise<QueueRow[]> {
+const orderSelectQueue = {
+  ...orderSelect,
+  late_probability: true,
+  is_fraud: true,
+} as const;
+
+export const WAREHOUSE_PAGE_SIZE = 50;
+
+export type WarehouseQueueResult = {
+  rows: QueueRow[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPages: number;
+};
+
+/**
+ * One page of the priority queue (late_probability desc, then order_id desc).
+ * Uses Prisma skip/take. Rows without a stored score sort last; display still uses computed fallbacks.
+ */
+export async function loadWarehouseQueue(page: number = 1): Promise<WarehouseQueueResult> {
   const { default: prisma } = await import("@/app/lib/prisma");
+  const pageSize = WAREHOUSE_PAGE_SIZE;
+
+  const rawPage = Number.isFinite(page) && page >= 1 ? Math.floor(page) : 1;
+
+  const totalCount = await prisma.orders.count();
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const safePage = totalCount === 0 ? 1 : Math.min(rawPage, totalPages);
+
   const orders = await prisma.orders.findMany({
-    select: orderSelect,
-    orderBy: { order_id: "desc" },
-    take: 200,
+    select: orderSelectQueue,
+    orderBy: [
+      { late_probability: { sort: "desc", nulls: "last" } },
+      { order_id: "desc" },
+    ],
+    skip: (safePage - 1) * pageSize,
+    take: pageSize,
   });
 
-  const rows = orders.map((o) =>
-    applyScoringRules({
+  const rows: QueueRow[] = orders.map((o) => {
+    const computed = applyScoringRules({
       order_id: o.order_id,
       customer_id: o.customer_id,
       order_datetime: o.order_datetime,
@@ -119,10 +151,22 @@ export async function loadWarehouseQueue(): Promise<QueueRow[]> {
       ip_country: o.ip_country,
       shipping_state: o.shipping_state,
       shipping_country: null,
-    })
-  );
-  rows.sort((a, b) => b.late_probability - a.late_probability);
-  return rows.slice(0, 50);
+    });
+    return {
+      ...computed,
+      late_probability: o.late_probability ?? computed.late_probability,
+      is_fraud: o.is_fraud,
+      fraud_probability: computed.fraud_probability,
+    };
+  });
+
+  return {
+    rows,
+    page: safePage,
+    pageSize,
+    totalCount,
+    totalPages,
+  };
 }
 
 export function getLastScoredAt(): string | null {
