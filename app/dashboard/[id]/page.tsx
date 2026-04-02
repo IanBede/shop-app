@@ -17,9 +17,23 @@ function formatDate(isoLike: string) {
   return d.toLocaleString(undefined, { year: "numeric", month: "short", day: "2-digit" });
 }
 
-function getOrderStatus(o: { shipments: { shipment_id: number; late_delivery: number } | null; is_fraud: number }) {
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** True when the order date is at least `days` full days before now (historical = likely fulfilled). */
+function isOrderAtLeastDaysOld(orderDatetime: string, days: number): boolean {
+  const t = new Date(orderDatetime).getTime();
+  if (Number.isNaN(t)) return false;
+  return Date.now() - t >= days * MS_PER_DAY;
+}
+
+function getOrderStatus(o: {
+  order_datetime: string;
+  shipments: { shipment_id: number; late_delivery: number } | null;
+  is_fraud: number;
+}) {
   if (o.is_fraud === 1) return "Flagged";
   if (o.shipments) return o.shipments.late_delivery === 1 ? "Delivered (Late)" : "Delivered";
+  if (isOrderAtLeastDaysOld(o.order_datetime, 2)) return "Delivered";
   return "Processing";
 }
 
