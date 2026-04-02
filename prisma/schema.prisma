@@ -57,9 +57,10 @@ model orders {
   tax_amount     Float
   order_total    Float
   risk_score        Float
-  is_fraud          Int           @default(0)
-  late_probability  Float?
-  order_items       order_items[]
+  is_fraud           Int           @default(0)
+  late_probability   Float?
+  fraud_probability  Float?
+  order_items        order_items[]
   customers      customers     @relation(fields: [customer_id], references: [customer_id], onDelete: NoAction, onUpdate: NoAction)
   shipments      shipments?
 

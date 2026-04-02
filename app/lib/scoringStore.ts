@@ -59,12 +59,16 @@ export function computeLateProbability(orderTotal: number, orderHour: number): n
 }
 
 /**
- * Fraud rule from notebook: unknown device + IP country ≠ shipping country → fraud probability > 80%.
+ * Fraud / risk tiers:
+ * - Unknown device + IP country ≠ shipping country → 87%, flagged (is_fraud).
+ * - High order value → 12% medium risk (not flagged).
+ * - Otherwise → 4% low risk.
  */
 export function computeFraudRisk(
   deviceType: string,
   ipCountry: string,
-  shippingCountry: string | null
+  shippingCountry: string | null,
+  orderTotal: number
 ): { fraud_probability: number; is_fraud: number } {
   const unknownDevice = deviceType.toLowerCase() === "unknown";
   const mismatch =
@@ -75,6 +79,9 @@ export function computeFraudRisk(
   if (unknownDevice && mismatch) {
     return { fraud_probability: 0.87, is_fraud: 1 };
   }
+  if (orderTotal > 800) {
+    return { fraud_probability: 0.12, is_fraud: 0 };
+  }
   return { fraud_probability: 0.04, is_fraud: 0 };
 }
 
@@ -82,7 +89,12 @@ export function applyScoringRules(row: Omit<QueueRow, "late_probability" | "frau
   const hour = orderHourUtc(row.order_datetime);
   const shipping_country = row.shipping_country ?? inferShippingCountry(row.shipping_state);
   const late_probability = computeLateProbability(row.order_total, hour);
-  const { fraud_probability, is_fraud } = computeFraudRisk(row.device_type, row.ip_country, shipping_country);
+  const { fraud_probability, is_fraud } = computeFraudRisk(
+    row.device_type,
+    row.ip_country,
+    shipping_country,
+    row.order_total
+  );
 
   return {
     ...row,
@@ -106,8 +118,8 @@ const orderSelect = {
 const orderSelectQueue = {
   ...orderSelect,
   late_probability: true,
+  fraud_probability: true,
   is_fraud: true,
-  risk_score: true,
 } as const;
 
 export const WAREHOUSE_PAGE_SIZE = 50;
@@ -142,7 +154,10 @@ function buildQueueOrderBy(sort: WarehouseSortKey, dir: WarehouseSortDir): Prism
         { order_id: dir },
       ];
     case "fraud_risk":
-      return [{ is_fraud: dir }, { risk_score: dir }, { order_id: dir }];
+      return [
+        { fraud_probability: { sort: dir, nulls: dir === "desc" ? "last" : "first" } },
+        { order_id: dir },
+      ];
     default:
       return [{ late_probability: { sort: "desc", nulls: "last" } }, { order_id: "desc" }];
   }
@@ -199,7 +214,7 @@ export async function loadWarehouseQueue(params: {
       ...computed,
       late_probability: o.late_probability ?? computed.late_probability,
       is_fraud: o.is_fraud,
-      fraud_probability: computed.fraud_probability,
+      fraud_probability: o.fraud_probability ?? computed.fraud_probability,
     };
   });
 
@@ -246,6 +261,7 @@ export async function runInMemoryScoring() {
       where: { order_id: o.order_id },
       data: {
         late_probability: row.late_probability,
+        fraud_probability: row.fraud_probability,
         is_fraud: row.is_fraud,
       },
     });
