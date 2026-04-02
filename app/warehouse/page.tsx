@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { getScoringStore } from "@/app/lib/scoringStore";
+import { getLastScoredAt, loadWarehouseQueue } from "@/app/lib/scoringStore";
 
 import { RunScoringButton } from "./RunScoringButton";
 
@@ -8,8 +8,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export default async function WarehousePage() {
-  const store = getScoringStore();
-  const rows = store.rows.slice(0, 50);
+  const rows = await loadWarehouseQueue();
+  const lastScoredAt = getLastScoredAt();
 
   return (
     <div className="min-h-screen bg-zinc-50">
@@ -31,9 +31,9 @@ export default async function WarehousePage() {
             <p className="mt-2 text-sm text-zinc-600">
               Top 50 orders sorted by late probability (descending).
             </p>
-            {store.lastScoredAt ? (
+            {lastScoredAt ? (
               <p className="mt-1 text-xs text-zinc-500">
-                Last scored: {new Date(store.lastScoredAt).toLocaleString()}
+                Last scored: {new Date(lastScoredAt).toLocaleString()}
               </p>
             ) : null}
           </div>

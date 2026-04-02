@@ -8,7 +8,10 @@ export default defineConfig({
   migrations: {
     path: "prisma/migrations",
   },
+  // Prisma CLI (migrate, db push, introspect) uses this URL. Prefer DIRECT_URL (port 5432) with
+  // Supabase so migrations are not blocked by PgBouncer. The Next.js app uses DATABASE_URL (pooled)
+  // in app/lib/prisma.ts for runtime queries.
   datasource: {
-    url: process.env["DATABASE_URL"],
+    url: process.env["DIRECT_URL"] ?? process.env["DATABASE_URL"],
   },
 });

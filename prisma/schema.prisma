@@ -3,8 +3,10 @@ generator client {
   output   = "../app/generated/prisma"
 }
 
+// Prisma 7: set `provider` here; set DATABASE_URL (pooled) and DIRECT_URL (direct) in `.env`.
+// CLI uses DIRECT_URL from prisma.config.ts; the app Pool uses DATABASE_URL in app/lib/prisma.ts.
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
 }
 
 model customers {
@@ -54,9 +56,10 @@ model orders {
   shipping_fee   Float
   tax_amount     Float
   order_total    Float
-  risk_score     Float
-  is_fraud       Int           @default(0)
-  order_items    order_items[]
+  risk_score        Float
+  is_fraud          Int           @default(0)
+  late_probability  Float?
+  order_items       order_items[]
   customers      customers     @relation(fields: [customer_id], references: [customer_id], onDelete: NoAction, onUpdate: NoAction)
   shipments      shipments?
 

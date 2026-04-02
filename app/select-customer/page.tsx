@@ -3,6 +3,7 @@ import Link from "next/link";
 import prisma from "@/app/lib/prisma";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export default async function SelectCustomerPage() {
   const customers = await prisma.customers.findMany({

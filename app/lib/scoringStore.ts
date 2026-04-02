@@ -14,19 +14,14 @@ export type QueueRow = {
   is_fraud: number;
 };
 
-type Store = {
-  rows: QueueRow[];
-  lastScoredAt: string | null;
-  hydratedFromDb: boolean;
+const scoringMeta = {
+  lastScoredAt: null as string | null,
 };
-
-const globalForScoring = globalThis as unknown as { __scoringStore?: Store };
 
 /** Hour 0–23 in UTC from stored order_datetime (ISO / SQLite-style). */
 export function orderHourUtc(orderDatetime: string): number {
   const d = new Date(orderDatetime);
   if (!Number.isNaN(d.getTime())) return d.getUTCHours();
-  // Fallback: "YYYY-MM-DD HH:MM:SS"
   const m = orderDatetime.match(/(\d{2}):(\d{2}):(\d{2})/);
   if (m) return Number(m[1]) % 24;
   return 12;
@@ -96,109 +91,77 @@ export function applyScoringRules(row: Omit<QueueRow, "late_probability" | "frau
   };
 }
 
-function syntheticInitRows(): QueueRow[] {
-  const deviceTypes = ["desktop", "mobile", "tablet", "unknown"] as const;
-  const ipCountries = ["US", "CA", "NG", "GB", "US"];
-  const states: (string | null)[] = ["CA", "NY", "TX", null, "ON"];
+const orderSelect = {
+  order_id: true,
+  customer_id: true,
+  order_datetime: true,
+  order_total: true,
+  device_type: true,
+  ip_country: true,
+  shipping_state: true,
+} as const;
 
-  const templates = Array.from({ length: 50 }, (_, i) => {
-    const orderId = 1000 + i + 1;
-    const customerId = 500 + ((i * 7) % 50) + 1;
-    // Mix of daytime vs after 8 PM UTC, low vs high totals
-    const hourChoices = [9, 11, 15, 19, 20, 21, 22, 23];
-    const h = hourChoices[i % hourChoices.length];
-    const day = 10 + (i % 18);
-    const order_datetime = `2024-06-${String(day).padStart(2, "0")}T${String(h).padStart(2, "0")}:30:00.000Z`;
-    const order_total = i % 5 === 0 ? 620 + i * 3 : 40 + i * 12;
-    const device_type = deviceTypes[i % deviceTypes.length];
-    const ip_country = ipCountries[i % ipCountries.length];
-    const shipping_state = states[i % states.length];
-
-    const base: Omit<QueueRow, "late_probability" | "fraud_probability" | "is_fraud"> = {
-      order_id: orderId,
-      customer_id: customerId,
-      order_datetime,
-      order_total,
-      device_type,
-      ip_country,
-      shipping_state,
-      shipping_country: null,
-    };
-
-    return applyScoringRules(base);
+export async function loadWarehouseQueue(): Promise<QueueRow[]> {
+  const { default: prisma } = await import("@/app/lib/prisma");
+  const orders = await prisma.orders.findMany({
+    select: orderSelect,
+    orderBy: { order_id: "desc" },
+    take: 200,
   });
 
-  return templates.sort((a, b) => b.late_probability - a.late_probability);
-}
-
-function initStore(): Store {
-  return {
-    rows: syntheticInitRows(),
-    lastScoredAt: null,
-    hydratedFromDb: false,
-  };
-}
-
-export function getScoringStore(): Store {
-  if (!globalForScoring.__scoringStore) globalForScoring.__scoringStore = initStore();
-  return globalForScoring.__scoringStore;
-}
-
-async function tryHydrateFromDatabase(): Promise<void> {
-  try {
-    const { default: prisma } = await import("@/app/lib/prisma");
-    const orders = await prisma.orders.findMany({
-      take: 50,
-      orderBy: { order_id: "desc" },
-      select: {
-        order_id: true,
-        customer_id: true,
-        order_datetime: true,
-        order_total: true,
-        device_type: true,
-        ip_country: true,
-        shipping_state: true,
-      },
-    });
-    if (orders.length === 0) return;
-
-    const store = getScoringStore();
-    store.rows = orders.map((o) =>
-      applyScoringRules({
-        order_id: o.order_id,
-        customer_id: o.customer_id,
-        order_datetime: o.order_datetime,
-        order_total: o.order_total,
-        device_type: o.device_type,
-        ip_country: o.ip_country,
-        shipping_state: o.shipping_state,
-        shipping_country: null,
-      })
-    );
-    store.hydratedFromDb = true;
-  } catch {
-    // Vercel / no DB: keep synthetic rows
-  }
-}
-
-/** Recompute all scores from current row features (deterministic; notebook rules). */
-export async function runInMemoryScoring() {
-  await tryHydrateFromDatabase();
-
-  const store = getScoringStore();
-  store.rows = store.rows.map((r) =>
+  const rows = orders.map((o) =>
     applyScoringRules({
-      order_id: r.order_id,
-      customer_id: r.customer_id,
-      order_datetime: r.order_datetime,
-      order_total: r.order_total,
-      device_type: r.device_type,
-      ip_country: r.ip_country,
-      shipping_state: r.shipping_state,
+      order_id: o.order_id,
+      customer_id: o.customer_id,
+      order_datetime: o.order_datetime,
+      order_total: o.order_total,
+      device_type: o.device_type,
+      ip_country: o.ip_country,
+      shipping_state: o.shipping_state,
       shipping_country: null,
     })
   );
-  store.rows.sort((a, b) => b.late_probability - a.late_probability);
-  store.lastScoredAt = new Date().toISOString();
-  return { count: store.rows.length, lastScoredAt: store.lastScoredAt };
+  rows.sort((a, b) => b.late_probability - a.late_probability);
+  return rows.slice(0, 50);
+}
+
+export function getLastScoredAt(): string | null {
+  return scoringMeta.lastScoredAt;
+}
+
+/** Load orders, compute scores, persist `late_probability` and `is_fraud` on each row. */
+export async function runInMemoryScoring() {
+  const { default: prisma } = await import("@/app/lib/prisma");
+
+  const orders = await prisma.orders.findMany({
+    select: orderSelect,
+  });
+
+  if (orders.length === 0) {
+    scoringMeta.lastScoredAt = new Date().toISOString();
+    return { count: 0, lastScoredAt: scoringMeta.lastScoredAt };
+  }
+
+  for (const o of orders) {
+    const row = applyScoringRules({
+      order_id: o.order_id,
+      customer_id: o.customer_id,
+      order_datetime: o.order_datetime,
+      order_total: o.order_total,
+      device_type: o.device_type,
+      ip_country: o.ip_country,
+      shipping_state: o.shipping_state,
+      shipping_country: null,
+    });
+    await prisma.orders.update({
+      where: { order_id: o.order_id },
+      data: {
+        late_probability: row.late_probability,
+        is_fraud: row.is_fraud,
+      },
+    });
+  }
+
+  scoringMeta.lastScoredAt = new Date().toISOString();
+  return { count: orders.length, lastScoredAt: scoringMeta.lastScoredAt };
 }

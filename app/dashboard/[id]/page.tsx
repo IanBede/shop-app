@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import prisma from "@/app/lib/prisma";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 function formatCurrency(amount: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
