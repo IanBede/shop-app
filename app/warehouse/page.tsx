@@ -34,10 +34,65 @@ function sortLabel(sort: WarehouseSortKey): string {
 export default async function WarehousePage({
   searchParams,
 }: {
-  searchParams?: Promise<{ page?: string; sort?: string; dir?: string }>;
+  searchParams?: Promise<{
+    page?: string | string[];
+    sort?: string | string[];
+    dir?: string | string[];
+  }>;
 }) {
   const sp = (await searchParams) ?? {};
   const { page: requestedPage, sort, dir } = parseWarehouseQuery(sp);
+
+  let queue:
+    | Awaited<ReturnType<typeof loadWarehouseQueue>>
+    | null = null;
+  let loadError: string | null = null;
+
+  try {
+    queue = await loadWarehouseQueue({ page: requestedPage, sort, dir });
+  } catch (err) {
+    console.error("[warehouse] loadWarehouseQueue failed:", err);
+    loadError =
+      err instanceof Error ? err.message : "Could not load warehouse data.";
+  }
+
+  const lastScoredAt = getLastScoredAt();
+
+  if (loadError || !queue) {
+    return (
+      <WarehouseShell>
+        <div className="min-h-screen bg-zinc-50">
+          <div className="mx-auto w-full max-w-5xl px-6 py-12">
+            <Link
+              href="/"
+              className="text-sm font-medium text-zinc-700 hover:text-zinc-900 hover:underline"
+            >
+              Back to Home
+            </Link>
+            <div className="mt-10 max-w-lg rounded-xl border border-rose-200 bg-rose-50 px-6 py-8">
+              <h1 className="text-lg font-semibold text-rose-900">
+                Warehouse queue unavailable
+              </h1>
+              <p className="mt-2 text-sm text-rose-800">
+                We couldn&apos;t load orders from the database. Check your connection string
+                and that the schema is deployed (including{" "}
+                <code className="rounded bg-rose-100 px-1 py-0.5 text-xs">
+                  fraud_probability
+                </code>{" "}
+                on <code className="rounded bg-rose-100 px-1 py-0.5 text-xs">orders</code>).
+                Try again in a moment.
+              </p>
+              {process.env.NODE_ENV === "development" && loadError ? (
+                <pre className="mt-4 max-h-40 overflow-auto rounded-lg bg-zinc-900 p-3 text-xs text-zinc-100">
+                  {loadError}
+                </pre>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </WarehouseShell>
+    );
+  }
 
   const {
     rows,
@@ -47,8 +102,7 @@ export default async function WarehousePage({
     totalCount,
     sort: activeSort,
     dir: activeDir,
-  } = await loadWarehouseQueue({ page: requestedPage, sort, dir });
-  const lastScoredAt = getLastScoredAt();
+  } = queue;
 
   return (
     <WarehouseShell>

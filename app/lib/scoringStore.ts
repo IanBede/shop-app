@@ -130,33 +130,64 @@ export type WarehouseSortDir = "asc" | "desc";
 
 const SORT_KEYS = new Set<WarehouseSortKey>(["order_id", "customer_id", "late_probability", "fraud_risk"]);
 
+function firstSearchParam(value: string | string[] | undefined): string | undefined {
+  if (value == null) return undefined;
+  const s = Array.isArray(value) ? value[0] : value;
+  return typeof s === "string" ? s : undefined;
+}
+
+function coercePage(value: unknown): number {
+  const n = typeof value === "number" ? value : Number.parseInt(String(value), 10);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1;
+}
+
+function coerceSortDir(value: unknown): WarehouseSortDir {
+  return value === "asc" ? "asc" : "desc";
+}
+
 export function parseWarehouseQuery(sp: {
-  page?: string;
-  sort?: string;
-  dir?: string;
+  page?: string | string[];
+  sort?: string | string[];
+  dir?: string | string[];
 }): { page: number; sort: WarehouseSortKey; dir: WarehouseSortDir } {
-  const pageParam = Number.parseInt(sp.page ?? "1", 10);
-  const page = Number.isFinite(pageParam) && pageParam >= 1 ? pageParam : 1;
-  const sort = SORT_KEYS.has(sp.sort as WarehouseSortKey) ? (sp.sort as WarehouseSortKey) : "late_probability";
-  const dir: WarehouseSortDir = sp.dir === "asc" || sp.dir === "desc" ? sp.dir : "desc";
+  const page = coercePage(firstSearchParam(sp.page));
+
+  const sortRaw = firstSearchParam(sp.sort);
+  const sort = SORT_KEYS.has(sortRaw as WarehouseSortKey)
+    ? (sortRaw as WarehouseSortKey)
+    : "late_probability";
+
+  const dirRaw = firstSearchParam(sp.dir);
+  const dir: WarehouseSortDir = dirRaw === "asc" || dirRaw === "desc" ? dirRaw : "desc";
   return { page, sort, dir };
 }
 
 function buildQueueOrderBy(sort: WarehouseSortKey, dir: WarehouseSortDir): Prisma.ordersOrderByWithRelationInput[] {
+  const orderDir: WarehouseSortDir = dir === "asc" ? "asc" : "desc";
   switch (sort) {
     case "order_id":
-      return [{ order_id: dir }];
+      return [{ order_id: orderDir }];
     case "customer_id":
-      return [{ customer_id: dir }, { order_id: dir }];
+      return [{ customer_id: orderDir }, { order_id: orderDir }];
     case "late_probability":
       return [
-        { late_probability: { sort: dir, nulls: dir === "desc" ? "last" : "first" } },
-        { order_id: dir },
+        {
+          late_probability: {
+            sort: orderDir,
+            nulls: orderDir === "desc" ? "last" : "first",
+          },
+        },
+        { order_id: orderDir },
       ];
     case "fraud_risk":
       return [
-        { fraud_probability: { sort: dir, nulls: dir === "desc" ? "last" : "first" } },
-        { order_id: dir },
+        {
+          fraud_probability: {
+            sort: orderDir,
+            nulls: orderDir === "desc" ? "last" : "first",
+          },
+        },
+        { order_id: orderDir },
       ];
     default:
       return [{ late_probability: { sort: "desc", nulls: "last" } }, { order_id: "desc" }];
@@ -183,38 +214,49 @@ export async function loadWarehouseQueue(params: {
   dir: WarehouseSortDir;
 }): Promise<WarehouseQueueResult> {
   const { default: prisma } = await import("@/app/lib/prisma");
-  const pageSize = WAREHOUSE_PAGE_SIZE;
-  const { sort, dir } = params;
 
-  const rawPage = Number.isFinite(params.page) && params.page >= 1 ? Math.floor(params.page) : 1;
+  const pageSize = Math.max(1, Math.floor(Number(WAREHOUSE_PAGE_SIZE)));
+  const sort = params.sort;
+  const dir = coerceSortDir(params.dir);
 
-  const totalCount = await prisma.orders.count();
+  const rawPage = coercePage(params.page);
+
+  const totalCountRaw = await prisma.orders.count();
+  const totalCount =
+    typeof totalCountRaw === "bigint" ? Number(totalCountRaw) : Number(totalCountRaw);
+
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
   const safePage = totalCount === 0 ? 1 : Math.min(rawPage, totalPages);
+
+  const skip = Math.max(0, (safePage - 1) * pageSize);
+  const take = pageSize;
 
   const orders = await prisma.orders.findMany({
     select: orderSelectQueue,
     orderBy: buildQueueOrderBy(sort, dir),
-    skip: (safePage - 1) * pageSize,
-    take: pageSize,
+    skip,
+    take,
   });
 
   const rows: QueueRow[] = orders.map((o) => {
+    const orderTotal = Number(o.order_total);
     const computed = applyScoringRules({
-      order_id: o.order_id,
-      customer_id: o.customer_id,
-      order_datetime: o.order_datetime,
-      order_total: o.order_total,
-      device_type: o.device_type,
-      ip_country: o.ip_country,
-      shipping_state: o.shipping_state,
+      order_id: Number(o.order_id),
+      customer_id: Number(o.customer_id),
+      order_datetime: String(o.order_datetime),
+      order_total: orderTotal,
+      device_type: String(o.device_type),
+      ip_country: String(o.ip_country),
+      shipping_state: o.shipping_state != null ? String(o.shipping_state) : null,
       shipping_country: null,
     });
+    const lateRaw = o.late_probability;
+    const fraudRaw = o.fraud_probability;
     return {
       ...computed,
-      late_probability: o.late_probability ?? computed.late_probability,
-      is_fraud: o.is_fraud,
-      fraud_probability: o.fraud_probability ?? computed.fraud_probability,
+      late_probability: lateRaw != null ? Number(lateRaw) : computed.late_probability,
+      is_fraud: Number(o.is_fraud),
+      fraud_probability: fraudRaw != null ? Number(fraudRaw) : computed.fraud_probability,
     };
   });
 
