@@ -1,3 +1,5 @@
+import type { Prisma } from "@/app/generated/prisma/client";
+
 export type QueueRow = {
   order_id: number;
   customer_id: number;
@@ -105,9 +107,46 @@ const orderSelectQueue = {
   ...orderSelect,
   late_probability: true,
   is_fraud: true,
+  risk_score: true,
 } as const;
 
 export const WAREHOUSE_PAGE_SIZE = 50;
+
+export type WarehouseSortKey = "order_id" | "customer_id" | "late_probability" | "fraud_risk";
+
+export type WarehouseSortDir = "asc" | "desc";
+
+const SORT_KEYS = new Set<WarehouseSortKey>(["order_id", "customer_id", "late_probability", "fraud_risk"]);
+
+export function parseWarehouseQuery(sp: {
+  page?: string;
+  sort?: string;
+  dir?: string;
+}): { page: number; sort: WarehouseSortKey; dir: WarehouseSortDir } {
+  const pageParam = Number.parseInt(sp.page ?? "1", 10);
+  const page = Number.isFinite(pageParam) && pageParam >= 1 ? pageParam : 1;
+  const sort = SORT_KEYS.has(sp.sort as WarehouseSortKey) ? (sp.sort as WarehouseSortKey) : "late_probability";
+  const dir: WarehouseSortDir = sp.dir === "asc" || sp.dir === "desc" ? sp.dir : "desc";
+  return { page, sort, dir };
+}
+
+function buildQueueOrderBy(sort: WarehouseSortKey, dir: WarehouseSortDir): Prisma.ordersOrderByWithRelationInput[] {
+  switch (sort) {
+    case "order_id":
+      return [{ order_id: dir }];
+    case "customer_id":
+      return [{ customer_id: dir }, { order_id: dir }];
+    case "late_probability":
+      return [
+        { late_probability: { sort: dir, nulls: dir === "desc" ? "last" : "first" } },
+        { order_id: dir },
+      ];
+    case "fraud_risk":
+      return [{ is_fraud: dir }, { risk_score: dir }, { order_id: dir }];
+    default:
+      return [{ late_probability: { sort: "desc", nulls: "last" } }, { order_id: "desc" }];
+  }
+}
 
 export type WarehouseQueueResult = {
   rows: QueueRow[];
@@ -115,17 +154,24 @@ export type WarehouseQueueResult = {
   pageSize: number;
   totalCount: number;
   totalPages: number;
+  sort: WarehouseSortKey;
+  dir: WarehouseSortDir;
 };
 
 /**
- * One page of the priority queue (late_probability desc, then order_id desc).
- * Uses Prisma skip/take. Rows without a stored score sort last; display still uses computed fallbacks.
+ * One page of the warehouse queue: Prisma orderBy + skip/take match URL params.
+ * runInMemoryScoring still updates every order globally; this only controls listing.
  */
-export async function loadWarehouseQueue(page: number = 1): Promise<WarehouseQueueResult> {
+export async function loadWarehouseQueue(params: {
+  page: number;
+  sort: WarehouseSortKey;
+  dir: WarehouseSortDir;
+}): Promise<WarehouseQueueResult> {
   const { default: prisma } = await import("@/app/lib/prisma");
   const pageSize = WAREHOUSE_PAGE_SIZE;
+  const { sort, dir } = params;
 
-  const rawPage = Number.isFinite(page) && page >= 1 ? Math.floor(page) : 1;
+  const rawPage = Number.isFinite(params.page) && params.page >= 1 ? Math.floor(params.page) : 1;
 
   const totalCount = await prisma.orders.count();
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
@@ -133,10 +179,7 @@ export async function loadWarehouseQueue(page: number = 1): Promise<WarehouseQue
 
   const orders = await prisma.orders.findMany({
     select: orderSelectQueue,
-    orderBy: [
-      { late_probability: { sort: "desc", nulls: "last" } },
-      { order_id: "desc" },
-    ],
+    orderBy: buildQueueOrderBy(sort, dir),
     skip: (safePage - 1) * pageSize,
     take: pageSize,
   });
@@ -166,6 +209,8 @@ export async function loadWarehouseQueue(page: number = 1): Promise<WarehouseQue
     pageSize,
     totalCount,
     totalPages,
+    sort,
+    dir,
   };
 }
 

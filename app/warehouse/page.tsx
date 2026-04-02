@@ -1,26 +1,113 @@
 import Link from "next/link";
 
-import { getLastScoredAt, loadWarehouseQueue, WAREHOUSE_PAGE_SIZE } from "@/app/lib/scoringStore";
+import {
+  getLastScoredAt,
+  loadWarehouseQueue,
+  parseWarehouseQuery,
+  WAREHOUSE_PAGE_SIZE,
+  type WarehouseSortKey,
+  type WarehouseSortDir,
+} from "@/app/lib/scoringStore";
 
 import { RunScoringButton } from "./RunScoringButton";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function warehouseHref(opts: {
+  page?: number;
+  sort: WarehouseSortKey;
+  dir: WarehouseSortDir;
+}): string {
+  const p = new URLSearchParams();
+  p.set("sort", opts.sort);
+  p.set("dir", opts.dir);
+  if (opts.page != null && opts.page > 1) {
+    p.set("page", String(opts.page));
+  }
+  return `/warehouse?${p.toString()}`;
+}
+
+function nextSortClick(
+  clicked: WarehouseSortKey,
+  sort: WarehouseSortKey,
+  dir: WarehouseSortDir
+): { sort: WarehouseSortKey; dir: WarehouseSortDir } {
+  if (sort === clicked) {
+    return { sort: clicked, dir: dir === "asc" ? "desc" : "asc" };
+  }
+  return { sort: clicked, dir: "desc" };
+}
+
+function sortLabel(sort: WarehouseSortKey): string {
+  switch (sort) {
+    case "order_id":
+      return "Order ID";
+    case "customer_id":
+      return "Customer ID";
+    case "late_probability":
+      return "late probability";
+    case "fraud_risk":
+      return "fraud risk";
+    default:
+      return sort;
+  }
+}
+
+function SortableTh({
+  column,
+  label,
+  sort,
+  dir,
+}: {
+  column: WarehouseSortKey;
+  label: string;
+  sort: WarehouseSortKey;
+  dir: WarehouseSortDir;
+}) {
+  const { sort: nextSort, dir: nextDir } = nextSortClick(column, sort, dir);
+  const active = sort === column;
+  const arrow = active ? (dir === "asc" ? " ↑" : " ↓") : "";
+
+  return (
+    <th
+      scope="col"
+      className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600"
+    >
+      <Link
+        href={warehouseHref({ page: 1, sort: nextSort, dir: nextDir })}
+        className="inline-flex items-center gap-1 rounded-md text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900"
+      >
+        {label}
+        <span className="font-normal normal-case text-zinc-500" aria-hidden>
+          {arrow}
+        </span>
+        {active ? <span className="sr-only">({dir === "asc" ? "ascending" : "descending"})</span> : null}
+      </Link>
+    </th>
+  );
+}
+
 export default async function WarehousePage({
   searchParams,
 }: {
-  searchParams?: Promise<{ page?: string }>;
+  searchParams?: Promise<{ page?: string; sort?: string; dir?: string }>;
 }) {
   const sp = (await searchParams) ?? {};
-  const pageParam = Number.parseInt(sp.page ?? "1", 10);
-  const page = Number.isFinite(pageParam) && pageParam >= 1 ? pageParam : 1;
+  const { page: requestedPage, sort, dir } = parseWarehouseQuery(sp);
 
-  const { rows, page: currentPage, totalPages, totalCount } = await loadWarehouseQueue(page);
+  const {
+    rows,
+    page: currentPage,
+    totalPages,
+    totalCount,
+    sort: activeSort,
+    dir: activeDir,
+  } = await loadWarehouseQueue({ page: requestedPage, sort, dir });
   const lastScoredAt = getLastScoredAt();
 
-  const prevHref = `/warehouse?page=${currentPage - 1}`;
-  const nextHref = `/warehouse?page=${currentPage + 1}`;
+  const prevHref = warehouseHref({ page: currentPage - 1, sort: activeSort, dir: activeDir });
+  const nextHref = warehouseHref({ page: currentPage + 1, sort: activeSort, dir: activeDir });
 
   return (
     <div className="min-h-screen bg-zinc-50">
@@ -40,10 +127,11 @@ export default async function WarehousePage({
               Late Delivery Priority Queue
             </h1>
             <p className="mt-2 text-sm text-zinc-600">
-              {totalCount} orders — sorted by late probability (highest first).{" "}
-              {totalPages > 1
-                ? `Page ${currentPage} of ${totalPages} (${WAREHOUSE_PAGE_SIZE} per page).`
-                : null}
+              {totalCount} orders — sorted by {sortLabel(activeSort)} ({activeDir}). {WAREHOUSE_PAGE_SIZE}{" "}
+              per page.
+            </p>
+            <p className="mt-1 text-sm font-medium text-zinc-800">
+              Page {currentPage} of {totalPages}
             </p>
             {lastScoredAt ? (
               <p className="mt-1 text-xs text-zinc-500">
@@ -60,30 +148,20 @@ export default async function WarehousePage({
             <table className="min-w-full divide-y divide-zinc-200">
               <thead className="bg-zinc-50">
                 <tr>
-                  <th
-                    scope="col"
-                    className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600"
-                  >
-                    Order ID
-                  </th>
-                  <th
-                    scope="col"
-                    className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600"
-                  >
-                    Customer ID
-                  </th>
-                  <th
-                    scope="col"
-                    className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600"
-                  >
-                    Late Probability
-                  </th>
-                  <th
-                    scope="col"
-                    className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-600"
-                  >
-                    Fraud risk
-                  </th>
+                  <SortableTh column="order_id" label="Order ID" sort={activeSort} dir={activeDir} />
+                  <SortableTh
+                    column="customer_id"
+                    label="Customer ID"
+                    sort={activeSort}
+                    dir={activeDir}
+                  />
+                  <SortableTh
+                    column="late_probability"
+                    label="Late Probability"
+                    sort={activeSort}
+                    dir={activeDir}
+                  />
+                  <SortableTh column="fraud_risk" label="Fraud risk" sort={activeSort} dir={activeDir} />
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-200 bg-white">
@@ -118,37 +196,42 @@ export default async function WarehousePage({
           </div>
         </div>
 
-        {totalPages > 1 ? (
+        {totalCount > 0 ? (
           <div className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-zinc-200 bg-white px-6 py-4 shadow-sm">
             <div className="text-sm text-zinc-600">
               Showing {(currentPage - 1) * WAREHOUSE_PAGE_SIZE + 1}–
               {Math.min(currentPage * WAREHOUSE_PAGE_SIZE, totalCount)} of {totalCount}
             </div>
-            <div className="flex items-center gap-2">
-              {currentPage <= 1 ? (
-                <span className="inline-flex cursor-not-allowed items-center rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-2 text-sm font-medium text-zinc-400">
-                  Previous
-                </span>
-              ) : (
-                <Link
-                  href={prevHref}
-                  className="inline-flex items-center rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm hover:bg-zinc-50"
-                >
-                  Previous
-                </Link>
-              )}
-              {currentPage >= totalPages ? (
-                <span className="inline-flex cursor-not-allowed items-center rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-2 text-sm font-medium text-zinc-400">
-                  Next
-                </span>
-              ) : (
-                <Link
-                  href={nextHref}
-                  className="inline-flex items-center rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm hover:bg-zinc-50"
-                >
-                  Next
-                </Link>
-              )}
+            <div className="flex flex-wrap items-center gap-4">
+              <span className="text-sm font-medium text-zinc-800">
+                Page {currentPage} of {totalPages}
+              </span>
+              <div className="flex items-center gap-2">
+                {currentPage <= 1 ? (
+                  <span className="inline-flex cursor-not-allowed items-center rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-2 text-sm font-medium text-zinc-400">
+                    Previous
+                  </span>
+                ) : (
+                  <Link
+                    href={prevHref}
+                    className="inline-flex items-center rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm hover:bg-zinc-50"
+                  >
+                    Previous
+                  </Link>
+                )}
+                {currentPage >= totalPages ? (
+                  <span className="inline-flex cursor-not-allowed items-center rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-2 text-sm font-medium text-zinc-400">
+                    Next
+                  </span>
+                ) : (
+                  <Link
+                    href={nextHref}
+                    className="inline-flex items-center rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-900 shadow-sm hover:bg-zinc-50"
+                  >
+                    Next
+                  </Link>
+                )}
+              </div>
             </div>
           </div>
         ) : null}
@@ -156,4 +239,3 @@ export default async function WarehousePage({
     </div>
   );
 }
-
